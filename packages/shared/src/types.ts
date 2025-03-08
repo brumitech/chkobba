@@ -18,6 +18,8 @@ export enum GameStatus {
   FINISHED = "finished",
 }
 
+export type GameMode = "1v1" | "2v2";
+
 export interface PlayerState {
   id: string;
   name: string;

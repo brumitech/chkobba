@@ -6,6 +6,7 @@ import { CardState } from "./CardState";
 export class PlayerState extends Schema {
   @type("string") id = "";
   @type("string") name = "";
+  @type("string") teamId = ""
   @type("boolean") isCurrentTurn = false;
   @type("boolean") connected = true;
   @type("number") score = 0;

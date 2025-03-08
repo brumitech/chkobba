@@ -3,13 +3,24 @@
 import { useState, useEffect, useCallback } from "react";
 import { gameClient } from "../utils/gameClient";
 import { useToast } from "@/ui/toast";
-import { Card, EVENT_MESSAGES, ERROR_MESSAGES, CARD_VALUES ,GAME_CONSTANTS } from "@chkobba/shared";
+import { Card, EVENT_MESSAGES, ERROR_MESSAGES, CARD_VALUES, GAME_CONSTANTS } from "@chkobba/shared";
+
+/**
+ * Team state structure
+ */
+interface TeamState {
+  id: string;
+  name: string;
+  memberCount: number;
+  score: number;
+}
 
 /**
  * Shape of the room state we receive from the server.
  */
 export interface GameState {
   gamePhase: "waiting" | "playing" | "finished";
+  gameMode: "1v1" | "2v2";
   players: {
     id: string;
     name: string;
@@ -19,15 +30,24 @@ export interface GameState {
     captured: Card[];
     score: number;
     lastCapture: boolean;
+    teamId?: string;
   }[];
+  teams: TeamState[];
   deck: Card[];
   tableCards: Card[];
   currentTurn: string;
   turnStartTime: number;
   turnNumber: number;
   winner: string;
+  winningTeam?: string;
   round: number;
   lastCapturePlayerId: string;
+  turnOrder: string[];
+}
+
+interface JoinGameOptions {
+  gameMode?: "1v1" | "2v2";
+  teamId?: string;
 }
 
 export function useGameState() {
@@ -102,8 +122,10 @@ export function useGameState() {
         setGameState({
           ...newState,
           players: [...newState.players],
+          teams: [...(newState.teams || [])],
           deck: [...newState.deck],
           tableCards: [...newState.tableCards],
+          turnOrder: [...(newState.turnOrder || [])]
         });
       },
 
@@ -159,7 +181,7 @@ export function useGameState() {
         setSelectedTableCardIds([]);
         addToast({
           title: "Left Game",
-          description: EVENT_MESSAGES.player_left,
+          description: EVENT_MESSAGES.PLAYER_LEFT,
           variant: "info",
         });
       },
@@ -168,7 +190,7 @@ export function useGameState() {
         if (player.id !== playerId) {
           addToast({
             title: "Player Joined",
-            description: `${player.name} ${EVENT_MESSAGES.player_joined}`,
+            description: `${player.name} ${EVENT_MESSAGES.PLAYER_JOINED}`,
             variant: "info",
           });
         }
@@ -177,7 +199,7 @@ export function useGameState() {
       onPlayerLeave: (player) => {
         addToast({
           title: "Player Left",
-          description: `${player.name} ${EVENT_MESSAGES.player_left}`,
+          description: `${player.name} ${EVENT_MESSAGES.PLAYER_LEFT}`,
           variant: "warning",
         });
       },
@@ -190,10 +212,10 @@ export function useGameState() {
         });
       },
 
-      onGameStart: () => {
+      onGameStart: (data) => {
         addToast({
           title: "Game Started",
-          description: EVENT_MESSAGES.game_started,
+          description: `${EVENT_MESSAGES.GAME_STARTED} (${data.gameMode} mode)`,
           variant: "info",
         });
       },
@@ -209,10 +231,24 @@ export function useGameState() {
             variant: isLocalPlayerWinner ? "success" : "info",
             duration: 8000,
           });
+        } else if (data.winningTeam) {
+          const winningTeamMembers = gameState?.teams.find(t => t.id === data.winningTeam);
+          const isLocalPlayerOnWinningTeam = gameState?.players.find(
+            p => p.id === playerId && p.teamId === data.winningTeam
+          );
+          
+          addToast({
+            title: "Game Over",
+            description: isLocalPlayerOnWinningTeam
+              ? `Congratulations! Your team (${data.teamName}) has won!`
+              : `Game over. ${data.teamName} has won.`,
+            variant: isLocalPlayerOnWinningTeam ? "success" : "info",
+            duration: 8000,
+          });
         } else if (data.reason) {
           addToast({
             title: "Game Ended",
-            description: `${EVENT_MESSAGES.game_ended}: ${data.reason}.`,
+            description: `${EVENT_MESSAGES.GAME_ENDED}: ${data.reason}.`,
             variant: "warning",
             duration: 8000,
           });
@@ -224,18 +260,40 @@ export function useGameState() {
         addToast({
           title: "Turn Timeout",
           description: isLocalPlayer
-            ? ERROR_MESSAGES.timeout
-            : EVENT_MESSAGES.turn_timeout,
+            ? ERROR_MESSAGES.TIMEOUT
+            : EVENT_MESSAGES.TURN_TIMEOUT,
           variant: "warning",
         });
       },
+      
+      onTeamChange: (data) => {
+        const isLocalPlayer = data.playerId === playerId;
+        if (!isLocalPlayer) {
+          addToast({
+            title: "Team Changed",
+            description: `${data.playerName} has joined a team.`,
+            variant: "info",
+          });
+        }
+      },
+
+      onTeamKoom: (data) => {
+        const isLocalPlayer = data.playerId === playerId;
+        addToast({
+          title: "Team KOOM!",
+          description: isLocalPlayer
+            ? `You performed a KOOM for team ${data.teamName}!`
+            : `${data.playerName} performed a KOOM for team ${data.teamName}!`,
+          variant: "success",
+        });
+      },
     });
-  }, [addToast, playerId, prevTurn]);
+  }, [addToast, playerId, prevTurn, gameState]);
 
   const joinGame = useCallback(
-    async (playerName: string) => {
+    async (playerName: string, options: JoinGameOptions = {}) => {
       try {
-        const { sessionId } = await gameClient.joinGame(playerName);
+        const { sessionId } = await gameClient.joinGame(playerName, options);
         setPlayerId(sessionId);
         addToast({
           title: "Joined Game",
@@ -268,39 +326,57 @@ export function useGameState() {
   }, []);
 
   // Determine if capture is possible
-  // Replace the canCapture function in useGameState.ts with this implementation
-
-const canCapture = useCallback(() => {
-  if (!selectedHandCardId || selectedTableCardIds.length === 0 || !gameState) {
-    return false;
-  }
-  
-  const selectedCard = gameState.players
-    .find(p => p.id === playerId)?.hand
-    .find(card => card.id === selectedHandCardId);
+  const canCapture = useCallback(() => {
+    if (!selectedHandCardId || selectedTableCardIds.length === 0 || !gameState) {
+      return false;
+    }
     
-  if (!selectedCard) return false;
-  
-  // Check if direct match (same rank)
-  const allSameRank = selectedTableCardIds.every(id => {
-    const tableCard = gameState.tableCards.find(card => card.id === id);
-    return tableCard && tableCard.rank === selectedCard.rank;
-  });
-  
-  if (allSameRank) return true;
-  
-  // Check if sum-based capture is valid
-  const selectedCardValue = CARD_VALUES[selectedCard.rank];
-  
-  // Get the values of all selected table cards
-  const selectedTableCardsSum = selectedTableCardIds.reduce((sum, id) => {
-    const tableCard = gameState.tableCards.find(card => card.id === id);
-    return sum + (tableCard ? CARD_VALUES[tableCard.rank] : 0);
-  }, 0);
-  
-  // Valid capture if the sum equals the played card's value
-  return selectedCardValue === selectedTableCardsSum;
-}, [gameState, playerId, selectedHandCardId, selectedTableCardIds]);
+    const selectedCard = gameState.players
+      .find(p => p.id === playerId)?.hand
+      .find(card => card.id === selectedHandCardId);
+      
+    if (!selectedCard) return false;
+    
+    // Check if direct match (same rank)
+    const allSameRank = selectedTableCardIds.every(id => {
+      const tableCard = gameState.tableCards.find(card => card.id === id);
+      return tableCard && tableCard.rank === selectedCard.rank;
+    });
+    
+    if (allSameRank) return true;
+    
+    // Check if sum-based capture is valid
+    const selectedCardValue = CARD_VALUES[selectedCard.rank];
+    
+    // Get the values of all selected table cards
+    const selectedTableCardsSum = selectedTableCardIds.reduce((sum, id) => {
+      const tableCard = gameState.tableCards.find(card => card.id === id);
+      return sum + (tableCard ? CARD_VALUES[tableCard.rank] : 0);
+    }, 0);
+    
+    // Valid capture if the sum equals the played card's value
+    return selectedCardValue === selectedTableCardsSum;
+  }, [gameState, playerId, selectedHandCardId, selectedTableCardIds]);
+
+  // Get team data for the current player
+  const getPlayerTeam = useCallback(() => {
+    if (!gameState || !playerId) return null;
+    
+    const player = gameState.players.find(p => p.id === playerId);
+    if (!player || !player.teamId) return null;
+    
+    return gameState.teams.find(team => team.id === player.teamId);
+  }, [gameState, playerId]);
+
+  // Select a team in 2v2 mode
+  const selectTeam = useCallback((teamId: string) => {
+    gameClient.selectTeam(teamId);
+    addToast({
+      title: "Team Selected",
+      description: `You've joined a team.`,
+      variant: "success",
+    });
+  }, [addToast]);
 
   return {
     gameState,
@@ -309,10 +385,12 @@ const canCapture = useCallback(() => {
     selectedTableCardIds,
     canCapture: canCapture(),
     canKoom,
+    playerTeam: getPlayerTeam(),
     actions: {
       joinGame,
       selectHandCard: handleHandCardSelect,
       selectTableCard: handleTableCardSelect,
+      selectTeam,
       reorderHand: (newHand: Card[]) => {
         if (playerId) {
           gameClient.reorderHand(newHand);

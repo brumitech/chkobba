@@ -3,11 +3,15 @@
 import { Schema, type, ArraySchema } from "@colyseus/schema";
 import { PlayerState } from "./PlayerState";
 import { CardState } from "./CardState";
+import { TeamState } from "./TeamState";
 
 export class ChkobbaState extends Schema {
   // Store players in an ArraySchema for seat-based logic
   @type([PlayerState])
   players = new ArraySchema<PlayerState>();
+
+  @type([TeamState]) 
+  teams = new ArraySchema<TeamState>();
 
   // Cards in the deck
   @type([CardState])
@@ -20,6 +24,8 @@ export class ChkobbaState extends Schema {
   // Current player's sessionId
   @type("string")
   currentTurn: string = "";
+
+  @type("string") gameMode: GameMode = "1v1";
 
   // Game phase: "waiting" | "playing" | "finished"
   @type("string")
@@ -36,6 +42,9 @@ export class ChkobbaState extends Schema {
   // Winner's sessionId when game is finished
   @type("string")
   winner: string = "";
+
+  // Winning team's sessionId when game is finished
+  @type("string") winningTeam: string = "";
   
   // Round number
   @type("number")

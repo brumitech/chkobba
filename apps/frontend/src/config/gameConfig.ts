@@ -54,7 +54,7 @@ export const CARD_VALUES = {
 // Special cards with their point values (for reference in UI)
 export const SPECIAL_CARDS = {
   SEVEN_OF_COINS: {
-    suit: "coins",
+    suit: "carreau",
     rank: "7",
     points: 1,
     description: "Worth 1 point at the end of a round"

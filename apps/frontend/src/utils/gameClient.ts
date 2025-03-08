@@ -9,12 +9,14 @@ interface GameClientCallbacks {
   onError?: (error: string) => void;
   onLeave?: () => void;
   onActionSuccess?: (action: string, data: ActionSuccessData) => void;
-  onPlayerJoin?: (player: { id: string; name: string }) => void;
+  onPlayerJoin?: (player: { id: string; name: string, teamId?: string }) => void;
   onPlayerLeave?: (player: { id: string; name: string }) => void;
   onNewRound?: (roundNumber: number) => void;
-  onGameStart?: () => void;
+  onGameStart?: (data: { gameMode: string }) => void;
   onGameEnd?: (data: GameEndData) => void;
   onPlayerTimeout?: (playerId: string) => void;
+  onTeamChange?: (data: TeamChangeData) => void;
+  onTeamKoom?: (data: TeamKoomData) => void;
 }
 
 // Define proper types instead of using 'any'
@@ -28,6 +30,22 @@ interface GameEndData {
   winner?: string;
   playerName?: string;
   reason?: string;
+  winningTeam?: string;
+  teamName?: string;
+  teamMembers?: Array<{ id: string; name: string }>;
+}
+
+interface TeamChangeData {
+  playerId: string;
+  playerName: string;
+  teamId: string;
+}
+
+interface TeamKoomData {
+  playerId: string;
+  playerName: string;
+  teamId: string;
+  teamName: string;
 }
 
 class GameClient {
@@ -40,12 +58,16 @@ class GameClient {
   }
 
   async joinGame(
-    playerName: string
+    playerName: string,
+    options: { teamId?: string, gameMode?: "1v1" | "2v2" } = {}
   ): Promise<{ room: Room<GameState>; sessionId: string }> {
     try {
-      const room = await this.client.joinOrCreate<GameState>("chkobba_room", {
+      const roomOptions = {
         name: playerName,
-      });
+        ...options
+      };
+
+      const room = await this.client.joinOrCreate<GameState>("chkobba_room", roomOptions);
       this.room = room;
       this.setupRoomListeners(room);
       return { room, sessionId: room.sessionId };
@@ -85,7 +107,7 @@ class GameClient {
       this.callbacks.onError?.(data.message);
     });
 
-    room.onMessage("playerJoin", (data: { id: string; name: string }) => {
+    room.onMessage("playerJoin", (data: { id: string; name: string, teamId?: string }) => {
       this.callbacks.onPlayerJoin?.(data);
     });
 
@@ -97,8 +119,8 @@ class GameClient {
       this.callbacks.onNewRound?.(data.round);
     });
 
-    room.onMessage("gameStart", () => {
-      this.callbacks.onGameStart?.();
+    room.onMessage("gameStart", (data: { gameMode: string }) => {
+      this.callbacks.onGameStart?.(data);
     });
 
     room.onMessage("gameEnd", (data: GameEndData) => {
@@ -107,6 +129,15 @@ class GameClient {
 
     room.onMessage("playerTimeout", (data: { playerId: string }) => {
       this.callbacks.onPlayerTimeout?.(data.playerId);
+    });
+
+    // Team-specific messages for 2v2 mode
+    room.onMessage("teamChange", (data: TeamChangeData) => {
+      this.callbacks.onTeamChange?.(data);
+    });
+
+    room.onMessage("teamKoom", (data: TeamKoomData) => {
+      this.callbacks.onTeamKoom?.(data);
     });
   }
 
@@ -128,6 +159,10 @@ class GameClient {
 
   koom(cardId: string) {
     this.room?.send("koom", { cardId });
+  }
+
+  selectTeam(teamId: string) {
+    this.room?.send("selectTeam", { teamId });
   }
 
   leaveGame() {
